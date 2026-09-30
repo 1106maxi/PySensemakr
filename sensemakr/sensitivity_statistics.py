@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 
-def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=1, alpha=1.0):
+def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=1, alpha=1.0, cluster_col = None):
     """
     Compute the robustness value of a regression coefficient.
 
@@ -91,6 +91,7 @@ def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=
     elif type(t_statistic) is float or type(t_statistic) is int:
         t_statistic = pd.Series(t_statistic)
 
+    # @maxi I think I should add a if cluster_col here
     fq = q * abs(t_statistic / np.sqrt(dof))  # Cohen's f for given q value
     f_crit = abs(t.ppf(alpha / 2, dof - 1)) / np.sqrt(dof - 1)  # computes critical f
     fqa = fq - f_crit  # f for q and alpha values
@@ -316,6 +317,13 @@ def group_partial_r2(model=None, covariates=None, f_statistic=None, p=None, dof=
         f_statistic = np.matmul(np.matmul(params.values.T, np.linalg.inv(v.values)), params.values) / p
     r2 = f_statistic * p / (f_statistic * p + dof)
     return r2
+
+# helper for clustering
+# for now only one-way @maxi continue here
+def cluster_partial_r2(model = None, cluster_col = None):
+    """
+    Computes the partial R^2 of the cluster membership with the outcome given treatment and observed covariates. 
+    """
 
 
 def sensitivity_stats(model=None, treatment=None, estimate=None, se=None, dof=None, q=1, alpha=0.05, reduce=True):
