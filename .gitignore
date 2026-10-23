@@ -2,3 +2,7 @@
 __pycache__/
 .ipynb_checkpoints
 backup/
+
+# build / test artifacts
+*.egg-info/
+.coverage
