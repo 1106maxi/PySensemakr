@@ -116,7 +116,7 @@ class Sensemakr:
 
     def __init__(self, model=None, treatment=None, estimate=None, se=None, dof=None, benchmark_covariates=None, kd=1,
                  ky=None, q=1, alpha=0.05, r2dz_x=None, r2yz_dx=None, r2dxj_x=None, r2yxj_dx=None,
-                 bound_label="Manual Bound", reduce=True):
+                 bound_label="Manual Bound", reduce=True, cluster_col = None, r2ys_dx = None):
         r"""
         Construct for a Sensemakr object.
 
@@ -195,6 +195,14 @@ class Sensemakr:
             self.r2yxj_dx = r2yxj_dx
         self.bound_label = bound_label
         self.reduce = reduce
+        self.cluster_col = cluster_col
+        # partial r^2 of cluster indicators with the outcome, given treatment and observed covariates (1 = no clustering)
+        if cluster_col is not None and model is not None:
+            self.r2ys_dx = sensitivity_statistics.cluster_partial_r2(model, cluster_col)
+        elif r2ys_dx is not None:
+            self.r2ys_dx = r2ys_dx
+        else:
+            self.r2ys_dx = 1
 
         # Compute sensitivity statistics for this model
         if model is not None:

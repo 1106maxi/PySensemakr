@@ -17,6 +17,7 @@ import sys
 from scipy.stats import t
 import numpy as np
 import pandas as pd
+import statsmodels.formula.api as smf
 
 
 def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=1, alpha=1.0, cluster_col = None):
@@ -88,15 +89,23 @@ def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=
         model_data = model_helper(model, covariates=covariates)
         t_statistic = model_data['t_statistics']
         dof = int(model_data['dof'])
+
     elif type(t_statistic) is float or type(t_statistic) is int:
         t_statistic = pd.Series(t_statistic)
 
     # @maxi I think I should add a if cluster_col here
-    fq = q * abs(t_statistic / np.sqrt(dof))  # Cohen's f for given q value
+    if cluster_col:
+        r2ys_dx = cluster_partial_r2(model,cluster_col)
+        #r2ys_dx = 0.27
+        fq = q * abs((1/np.sqrt(r2ys_dx))*(t_statistic / np.sqrt(dof)))
+    else:
+        fq = q * abs(t_statistic / np.sqrt(dof))  # Cohen's f for given q value
+
     f_crit = abs(t.ppf(alpha / 2, dof - 1)) / np.sqrt(dof - 1)  # computes critical f
     fqa = fq - f_crit  # f for q and alpha values
 
-    rv = 0.5 * (np.sqrt(fqa**4 + (4 * fqa**2)) - fqa**2)  # constraint binding case
+    rv = 0.5 * (np.sqrt(fq**4 + (4 * fq**2)) - fq**2)
+    #rv = 0.5 * (np.sqrt(fqa**4 + (4 * fqa**2)) - fqa**2)  # constraint binding case
     rvx = (fq**2 - f_crit**2)/(1 + fq**2)  # constraint not binding case
 
     # combined results
@@ -324,7 +333,16 @@ def cluster_partial_r2(model = None, cluster_col = None):
     """
     Computes the partial R^2 of the cluster membership with the outcome given treatment and observed covariates. 
     """
-
+    #formula = model.model.formula
+    #covs =  model.model.exog_names
+    #df = model.model.data.frame
+    #aux_reg = smf.ols(f"{formula} + C(Q({cluster_col!r}))", data=df).fit()
+    #cluster_names = [i for i in aux_reg.model.exog_names if i not in covs] 
+    #return group_partial_r2(model=aux_reg, covariates=cluster_names)
+    resid = model.resid
+    clusters = model.model.data.frame.loc[resid.index, cluster_col]
+    resid_between = resid.groupby(clusters).transform("mean")
+    return (resid_between**2).sum() / (resid**2).sum()
 
 def sensitivity_stats(model=None, treatment=None, estimate=None, se=None, dof=None, q=1, alpha=0.05, reduce=True):
     r"""

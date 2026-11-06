@@ -85,6 +85,7 @@ Example
 from . import sensitivity_statistics
 import sys
 import numpy as np
+import statsmodels.api as sm
 
 
 def adjusted_estimate(r2dz_x, r2yz_dx, model=None, treatment=None, estimate=None, se=None, dof=None, reduce=True):
@@ -189,6 +190,23 @@ def adjusted_t(r2dz_x, r2yz_dx, model=None, treatment=None, estimate=None, se=No
     new_t = (new_estimate - h0) / adjusted_se(r2yz_dx=r2yz_dx, r2dz_x=r2dz_x, se=se, dof=dof)
     return new_t  # , h0
 
+def adjusted_hc_se(model, treatment, r2dz_x, r2yz_dx, kappa):
+    treat = model.model.data.frame[treatment]
+    names = [i for i in model.model.exog_names if i not in [treatment, "Intercept"]]
+    covariates = model.model.data.frame[names]
+
+    se_hc = model.HC0_se[treatment]
+
+    out_resid = model.resid
+    #model.tvalues[treatment]
+    aux_reg = sm.OLS(treat, sm.add_constant(covariates)).fit()
+    treat_resid = aux_reg.resid
+
+    kappa_s = (np.cov(treat_resid**2, out_resid**2))[0,1]/ (np.var(treat_resid, ddof = 1) * np.var(out_resid, ddof = 1))
+    k = (1+kappa) / (1+kappa_s)
+
+    new_se = se_hc * np.sqrt((1 - r2yz_dx) / (1 - r2dz_x) * k)
+    return new_se
 
 def adjusted_partial_r2(r2dz_x, r2yz_dx, model=None, treatment=None, estimate=None, se=None, dof=None,
                         reduce=True, h0=0):
