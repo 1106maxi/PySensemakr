@@ -17,9 +17,11 @@ import sys
 from scipy.stats import t
 import numpy as np
 import pandas as pd
+from . import cluster_adjustments
 
 
-def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=1, alpha=1.0):
+def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=1, alpha=1.0, cluster=None,
+                     eta2=None):
     """
     Compute the robustness value of a regression coefficient.
 
@@ -54,6 +56,16 @@ def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=
         a float with the percent to reduce the point estimate by for the robustness value RV_q (Default value = 1).
     alpha : float
         a float with the significance level for the robustness value RV_qa to render the estimate not significant (Default value = 1.0).
+    cluster : string
+        a string with the name of the column of the model's data that identifies the clusters. Requires model
+        (Default value = None).
+    eta2 : float
+        a float with eta2, the partial R2 of the cluster indicators with the outcome (see cluster_partial_r2), when
+        it is already known. Use instead of cluster (Default value = None).
+
+        With cluster or eta2, returns the cluster-adjusted robustness value (Strezhnev 2026). A cluster-level
+        confounder would need to explain this share of the between-cluster variation in both the treatment and the
+        outcome to reduce the point estimate by the fraction q. It is only defined for alpha = 1.
 
     Returns
     -------
@@ -83,6 +95,9 @@ def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=
                  'or a t-statistic and degrees of freedom.')
     check_q(q)
     check_alpha(alpha)
+    if (cluster is not None or eta2 is not None) and alpha != 1:
+        raise ValueError('The cluster adjustment is only defined for the point estimate (alpha = 1).')
+    eta2 = cluster_adjustments.resolve_eta2(model=model, cluster=cluster, eta2=eta2, variables=covariates)
 
     if model is not None:
         model_data = model_helper(model, covariates=covariates)
@@ -91,6 +106,8 @@ def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=
     elif type(t_statistic) is float or type(t_statistic) is int:
         t_statistic = pd.Series(t_statistic)
 
+    if eta2 is not None:
+        t_statistic = t_statistic / np.sqrt(eta2)  # cluster-scale partial f: unit-scale f / eta
     fq = q * abs(t_statistic / np.sqrt(dof))  # Cohen's f for given q value
     f_crit = abs(t.ppf(alpha / 2, dof - 1)) / np.sqrt(dof - 1)  # computes critical f
     fqa = fq - f_crit  # f for q and alpha values
@@ -109,7 +126,7 @@ def robustness_value(model=None, covariates=None, t_statistic=None, dof=None, q=
     return rv_out
 
 
-def partial_r2(model=None, covariates=None, t_statistic=None, dof=None):
+def partial_r2(model=None, covariates=None, t_statistic=None, dof=None, cluster=None, eta2=None):
     r"""
     Compute the partial R2 for a linear regression model.
 
@@ -136,6 +153,15 @@ def partial_r2(model=None, covariates=None, t_statistic=None, dof=None):
         a float with the t_statistic for the restricted model regression.
     dof : int
         an int with the degrees of freedom of the restricted regression.
+    cluster : string
+        a string with the name of the column of the model's data that identifies the clusters. Requires model
+        (Default value = None).
+    eta2 : float
+        a float with eta2, the partial R2 of the cluster indicators with the outcome (see cluster_partial_r2), when
+        it is already known. Use instead of cluster (Default value = None).
+
+        With cluster or eta2, the partial R2 refers to the between-cluster variation (see cluster_partial_r2), and
+        the covariates must be constant within clusters.
 
     Returns
     -------
@@ -169,17 +195,21 @@ def partial_r2(model=None, covariates=None, t_statistic=None, dof=None):
     if model is None and (t_statistic is None or dof is None):
         sys.exit('Error: partial_r2 requires either a statsmodels OLSResults object '
                  'or a t-statistic and degrees of freedom.')
+    eta2 = cluster_adjustments.resolve_eta2(model=model, cluster=cluster, eta2=eta2, variables=covariates)
 
     if model is not None:
         model_data = model_helper(model, covariates=covariates)
         t_statistic = model_data['t_statistics']
         dof = model_data['dof']
-        return (t_statistic ** 2 / (t_statistic ** 2 + dof)).iloc[0]  # extracts float
-    else:
-        return t_statistic ** 2 / (t_statistic ** 2 + dof)
+    if eta2 is not None:
+        t_statistic = t_statistic / np.sqrt(eta2)
+    r2 = t_statistic ** 2 / (t_statistic ** 2 + dof)
+    if model is not None:
+        return r2.iloc[0]  # extracts float
+    return r2
 
 
-def partial_f2(model=None, covariates=None, t_statistic=None, dof=None):
+def partial_f2(model=None, covariates=None, t_statistic=None, dof=None, cluster=None, eta2=None):
     r"""
     Compute the partial (Cohen's) f2 for a linear regression model.
 
@@ -202,6 +232,15 @@ def partial_f2(model=None, covariates=None, t_statistic=None, dof=None):
         a float with the t_statistic for the restricted model regression.
     dof : int
         an int with the degrees of freedom of the restricted regression.
+    cluster : string
+        a string with the name of the column of the model's data that identifies the clusters. Requires model
+        (Default value = None).
+    eta2 : float
+        a float with eta2, the partial R2 of the cluster indicators with the outcome (see cluster_partial_r2), when
+        it is already known. Use instead of cluster (Default value = None).
+
+        With cluster or eta2, the partial f2 refers to the between-cluster variation (see cluster_partial_r2), and
+        the covariates must be constant within clusters.
 
     Returns
     -------
@@ -228,16 +267,19 @@ def partial_f2(model=None, covariates=None, t_statistic=None, dof=None):
     if model is None and (t_statistic is None or dof is None):
         sys.exit('Error: partial_f2 requires either a statsmodels OLSResults object '
                  'or a t-statistic and degrees of freedom.')
+    eta2 = cluster_adjustments.resolve_eta2(model=model, cluster=cluster, eta2=eta2, variables=covariates)
 
     if model is not None:
         model_data = model_helper(model, covariates=covariates)
         t_statistic = model_data['t_statistics']
         dof = model_data['dof']
+    if eta2 is not None:
+        t_statistic = t_statistic / np.sqrt(eta2)
 
     return t_statistic ** 2 / dof
 
 
-def partial_f(model=None, covariates=None, t_statistic=None, dof=None):
+def partial_f(model=None, covariates=None, t_statistic=None, dof=None, cluster=None, eta2=None):
     """
     Calculate the square root of the partial_f2 function described above.
 
@@ -252,16 +294,25 @@ def partial_f(model=None, covariates=None, t_statistic=None, dof=None):
         a float with the t_statistic for the restricted model regression.
     dof : int
         an int with the degrees of freedom of the restricted regression.
+    cluster : string
+        a string with the name of the column of the model's data that identifies the clusters. Requires model
+        (Default value = None).
+    eta2 : float
+        a float with eta2, the partial R2 of the cluster indicators with the outcome (see cluster_partial_r2), when
+        it is already known. Use instead of cluster (Default value = None).
+
+        With cluster or eta2, the partial f refers to the between-cluster variation (see cluster_partial_r2), and
+        the covariates must be constant within clusters.
 
     Returns
     -------
     float
         a float with the computed partial f.
     """
-    return np.sqrt(partial_f2(model, covariates, t_statistic, dof))
+    return np.sqrt(partial_f2(model, covariates, t_statistic, dof, cluster=cluster, eta2=eta2))
 
 
-def group_partial_r2(model=None, covariates=None, f_statistic=None, p=None, dof=None):
+def group_partial_r2(model=None, covariates=None, f_statistic=None, p=None, dof=None, cluster=None, eta2=None):
     r"""
     Partial R2 of groups of covariates in a linear regression model.
 
@@ -283,6 +334,15 @@ def group_partial_r2(model=None, covariates=None, f_statistic=None, p=None, dof=
         an int with the number of parameters in the model.
     dof : int
         an int with the degrees of freedom of the restricted regression.
+    cluster : string
+        a string with the name of the column of the model's data that identifies the clusters. Requires model
+        (Default value = None).
+    eta2 : float
+        a float with eta2, the partial R2 of the cluster indicators with the outcome (see cluster_partial_r2), when
+        it is already known. Use instead of cluster (Default value = None).
+
+        With cluster or eta2, the partial R2 refers to the between-cluster variation (see cluster_partial_r2), and
+        the covariates must be constant within clusters.
 
     Returns
     -------
@@ -304,21 +364,25 @@ def group_partial_r2(model=None, covariates=None, f_statistic=None, p=None, dof=
     if (model is None or covariates is None) and (f_statistic is None or p is None or dof is None):
         sys.exit('Error: group_partial_r2 requires either a statsmodels OLSResults object and covariates or an '
                  'f-statistic, number of parameters, and degrees of freedom.')
+    eta2 = cluster_adjustments.resolve_eta2(model=model, cluster=cluster, eta2=eta2, variables=covariates)
     if((f_statistic is None or p is None or dof is None)):
         params = model.params
         check_covariates(model.model.exog_names, covariates)
         params = params[covariates]
         if np.isscalar(params):
-            return partial_r2(model=model, covariates=covariates, t_statistic=f_statistic, dof=dof)
+            return partial_r2(model=model, covariates=covariates, t_statistic=f_statistic, dof=dof, eta2=eta2)
         v = model.cov_params().loc[covariates, :][covariates]  # variance-covariance matrix
         dof = model.df_resid
         p = len(params)
         f_statistic = np.matmul(np.matmul(params.values.T, np.linalg.inv(v.values)), params.values) / p
+    if eta2 is not None:
+        f_statistic = f_statistic / eta2  # the group's partial f2 divided by eta2
     r2 = f_statistic * p / (f_statistic * p + dof)
     return r2
 
 
-def sensitivity_stats(model=None, treatment=None, estimate=None, se=None, dof=None, q=1, alpha=0.05, reduce=True):
+def sensitivity_stats(model=None, treatment=None, estimate=None, se=None, dof=None, q=1, alpha=0.05, reduce=True,
+                      cluster=None, eta2=None):
     r"""
     Computes the robustness_value, partial_r2 and partial_f2 of the coefficient of interest.
 
@@ -342,6 +406,14 @@ def sensitivity_stats(model=None, treatment=None, estimate=None, se=None, dof=No
         a float with the significance level for the robustness value RV_qa to render the estimate not significant (Default value = 0.05).
     reduce : boolean
         whether to reduce or increase the estimate due to confounding (Default value = True).
+    cluster : string
+        a string with the name of the column of the model's data that identifies the clusters. Requires model
+        (Default value = None).
+    eta2 : float
+        a float with eta2, the partial R2 of the cluster indicators with the outcome (see cluster_partial_r2), when
+        it is already known. Use instead of cluster (Default value = None).
+
+        With cluster or eta2, the result also contains eta2, rv_q_cluster and xrv_q_cluster.
 
     Returns
     -------
@@ -365,6 +437,9 @@ def sensitivity_stats(model=None, treatment=None, estimate=None, se=None, dof=No
         **f2yd_x** : a float with the partial (Cohen's) f2 of the treatment with the outcome, see details in partial_f2.
 
         **dof** : an int with the degrees of freedom of the model.
+
+        **eta2**, **rv_q_cluster**, **xrv_q_cluster** (only with cluster or eta2) : the partial R2 of the cluster
+        indicators with the outcome, and the cluster-adjusted robustness value and extreme robustness value.
 
     Examples
     ---------
@@ -390,6 +465,7 @@ def sensitivity_stats(model=None, treatment=None, estimate=None, se=None, dof=No
         estimate = list(model_data['estimate'])[0]
         se = list(model_data['se'])[0]
         dof = int(model_data['dof'])
+    eta2 = cluster_adjustments.resolve_eta2(model=model, cluster=cluster, eta2=eta2, variables=treatment)
 
     check_q(q)
     check_alpha(alpha)
@@ -408,6 +484,11 @@ def sensitivity_stats(model=None, treatment=None, estimate=None, se=None, dof=No
     f2yd_x = partial_f2(t_statistic=original_t, dof=dof)
     sensitivity_stats_df = {'estimate': estimate, 'se': se, 't_statistic': t_statistic,
                             'r2yd_x': r2yd_x, 'rv_q': rv_q, 'rv_qa': rv_qa, 'f2yd_x': f2yd_x, 'dof': dof}
+    if eta2 is not None:
+        sensitivity_stats_df['eta2'] = eta2
+        sensitivity_stats_df['rv_q_cluster'] = list(robustness_value(t_statistic=original_t, dof=dof, q=q,
+                                                                     eta2=eta2))[0]
+        sensitivity_stats_df['xrv_q_cluster'] = partial_r2(t_statistic=q * original_t, dof=dof, eta2=eta2)
     return sensitivity_stats_df
 
 
